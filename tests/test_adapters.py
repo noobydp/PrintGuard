@@ -570,6 +570,111 @@ async def test_ultimaker_queues_an_upload_on_the_cluster() -> None:
         await INTEGRATIONS["ultimaker"].print_file(RecordingHttp(status=415), {"base_url": "http://um.lan"}, "x.gcode", b"")
 
 
+
+FLASHFORGE = {"host": "192.168.1.44", "serial": "SNFF123", "check_code": "abcd1234"}
+FLASHFORGE_DETAIL = {
+    "status": "printing",
+    "printFileName": "benchy.gcode.3mf",
+    "printProgress": 0.8627,
+    "estimatedTime": 6029,
+    "nozzleTemps": [139, 160, 220, 139],
+    "nozzleTargetTemps": [140, 140, 220, 220],
+    "platTemp": 55,
+    "platTargetTemp": 55,
+    "cameraStreamUrl": "http://192.168.1.44:8080/?action=stream",
+}
+
+
+async def test_flashforge_reads_detail_with_its_credentials() -> None:
+    http = RecordingHttp(body={"code": 0, "message": "Success", "detail": FLASHFORGE_DETAIL})
+    state = await INTEGRATIONS["flashforge"].fetch_state(http, FLASHFORGE)
+    assert http.last["method"] == "POST"
+    assert http.last["url"] == "http://192.168.1.44:8898/detail"
+    assert http.last["json"] == {"serialNumber": "SNFF123", "checkCode": "abcd1234"}
+    assert state.public() == {
+        "status": "printing",
+        "progress": 86.3,
+        "job": "benchy.gcode.3mf",
+        "remaining_s": 6029,
+        "nozzle": {"actual": 220.0, "target": 220.0},
+        "bed": {"actual": 55.0, "target": 55.0},
+    }
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("printing", DeviceStatus.PRINTING),
+        ("building", DeviceStatus.PRINTING),
+        ("pausing", DeviceStatus.PAUSED),
+        ("paused", DeviceStatus.PAUSED),
+        ("ready", DeviceStatus.IDLE),
+        ("completed", DeviceStatus.IDLE),
+        ("cancel", DeviceStatus.IDLE),
+        ("error", DeviceStatus.ERROR),
+        ("heating", DeviceStatus.UNKNOWN),
+        ("", DeviceStatus.UNKNOWN),
+    ],
+)
+async def test_flashforge_normalises_its_status(status: str, expected: DeviceStatus) -> None:
+    http = RecordingHttp(body={"code": 0, "detail": {**FLASHFORGE_DETAIL, "status": status}})
+    assert (await INTEGRATIONS["flashforge"].fetch_state(http, FLASHFORGE)).status is expected
+
+
+async def test_flashforge_idle_printer_reports_no_job() -> None:
+    idle = {**FLASHFORGE_DETAIL, "status": "ready", "printProgress": 0.0, "estimatedTime": 0.0, "nozzleTargetTemps": [0, 0, 0, 0]}
+    state = await INTEGRATIONS["flashforge"].fetch_state(RecordingHttp(body={"code": 0, "detail": idle}), FLASHFORGE)
+    assert (state.status, state.progress, state.job, state.remaining_s) == (DeviceStatus.IDLE, 0.0, None, None)
+    assert state.nozzle.public() == {"actual": 220.0, "target": 0.0}
+
+
+async def test_flashforge_single_nozzle_fields_are_read_without_the_tool_arrays() -> None:
+    single = {"status": "ready", "nozzleTemp": 25, "nozzleTargetTemp": 0, "platTemp": 24, "platTargetTemp": 0}
+    state = await INTEGRATIONS["flashforge"].fetch_state(RecordingHttp(body={"code": 0, "detail": single}), FLASHFORGE)
+    assert state.nozzle.public() == {"actual": 25.0, "target": 0.0}
+
+
+async def test_flashforge_names_lan_mode_when_it_is_off() -> None:
+    with pytest.raises(RuntimeError, match="LAN mode is off"):
+        await INTEGRATIONS["flashforge"].fetch_state(RecordingHttp(body={"code": -2, "message": "lan mode off"}), FLASHFORGE)
+
+
+async def test_flashforge_rejected_credentials_say_why() -> None:
+    with pytest.raises(RuntimeError, match="FlashForge rejected its state: check code error"):
+        await INTEGRATIONS["flashforge"].fetch_state(RecordingHttp(body={"code": 1, "message": "check code error"}), FLASHFORGE)
+
+
+@pytest.mark.parametrize("answer", [(503, "unavailable"), SIGN_IN_PAGE, (200, {"code": 0})])
+async def test_flashforge_that_answers_badly_says_why(answer: tuple[int, Any]) -> None:
+    with pytest.raises(RuntimeError, match="FlashForge"):
+        await INTEGRATIONS["flashforge"].fetch_state(RecordingHttp(*answer), FLASHFORGE)
+
+
+async def test_flashforge_actions_are_job_control_commands() -> None:
+    http = RecordingHttp(body={"code": 0, "message": "Success"})
+    for action, sent in ((DeviceAction.PAUSE, "pause"), (DeviceAction.RESUME, "continue"), (DeviceAction.CANCEL, "cancel")):
+        await INTEGRATIONS["flashforge"].send(http, FLASHFORGE, action)
+        assert http.last["url"] == "http://192.168.1.44:8898/control"
+        assert http.last["json"] == {
+            "serialNumber": "SNFF123",
+            "checkCode": "abcd1234",
+            "payload": {"cmd": "jobCtl_cmd", "args": {"jobID": "", "action": sent}},
+        }
+    with pytest.raises(RuntimeError, match="FlashForge rejected pause"):
+        await INTEGRATIONS["flashforge"].send(RecordingHttp(body={"code": 1, "message": "busy"}), FLASHFORGE, DeviceAction.PAUSE)
+
+
+async def test_flashforge_camera_is_mjpeg_on_port_8080() -> None:
+    cams = await INTEGRATIONS["flashforge"].cameras(RecordingHttp(), FLASHFORGE)
+    assert cams == [{"key": "camera", "name": "FlashForge camera", "source": {"kind": "url", "url": "http://192.168.1.44:8080/?action=stream"}}]
+
+
+def test_flashforge_check_code_is_a_required_secret() -> None:
+    adapter = INTEGRATIONS["flashforge"]
+    assert adapter.schema["properties"]["check_code"]["secret"] is True
+    with pytest.raises(ValueError, match="Check code"):
+        adapter.require({"host": "192.168.1.44", "serial": "SNFF123", "check_code": ""})
+
 async def test_ultimaker_camera_is_mjpeg_on_port_8080() -> None:
     cams = await INTEGRATIONS["ultimaker"].cameras(RecordingHttp(), {"base_url": "http://192.168.1.60/"})
     assert cams == [{"key": "camera", "name": "Ultimaker camera", "source": {"kind": "url", "url": "http://192.168.1.60:8080/?action=stream"}}]
@@ -1973,6 +2078,7 @@ def test_print_formats_and_heater_control_travel_with_adapter_meta() -> None:
         "bambu": (["3mf"], True),
         "elegoo": (["gcode"], True),
         "ultimaker": (["gcode"], False),
+        "flashforge": ([], False),
     }
 
 

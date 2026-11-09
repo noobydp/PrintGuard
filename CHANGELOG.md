@@ -7,6 +7,12 @@ release notes.
 The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- FlashForge Creator 5 and Creator 5 Pro printers connect over their LAN-mode API, so a defect pauses or cancels the print, the job, progress and temperatures show on the monitor, and the printer's camera is added for you.
+
 ## [2.6.6] - 2026-11-07
 
 ### Fixed

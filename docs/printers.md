@@ -69,6 +69,7 @@ watched and warns you. See [failing safely](architecture.md#failing-safely).
 | [Prusa (PrusaLink)](https://help.prusa3d.com/guide/wi-fi-and-prusa-connect-link-setup-core-one-mk4-s-mk3-9-mk3-5-xl-mini_413293) | HTTP Digest, user `maker` unless you set another | No local stream |
 | [Bambu Lab](https://github.com/Doridian/OpenBambuAPI) | Access code and serial | Chamber camera |
 | [Ultimaker](https://github.com/Ultimaker/Cura/tree/main/plugins/UM3NetworkPrinting) | None, so keep it on a trusted LAN | Yes, its MJPEG stream on port 8080 |
+| [FlashForge Creator 5](https://github.com/Parallel-7/flashforge-api-docs) | Serial number and the check code LAN mode shows | Yes, its MJPEG stream on port 8080 |
 
 <details>
 <summary><b>Bambu Lab</b>: LAN Only Mode and Developer Mode</summary>
@@ -155,6 +156,30 @@ boots, runs maintenance or waits for you mid-print, PrintGuard shows its state a
 monitor stays as it was.
 
 The integration is experimental until it has been tried on more of these models.
+
+</details>
+
+<details>
+<summary><b>FlashForge</b>: Creator 5 and Creator 5 Pro over LAN mode</summary>
+
+The Creator 5 and Creator 5 Pro serve a local HTTP API on port `8898` once LAN mode is on.
+
+1. Turn on **LAN mode** on the printer's screen and note the check code it shows.
+2. Note the printer's serial number from its device information.
+3. Register the printer with its IP address, serial number and check code.
+
+PrintGuard reads the job, progress, time left and temperatures, and pauses, resumes or cancels the
+job. The Creator 5 is a four-tool changer and PrintGuard shows one nozzle, the tool with the highest
+target, which is the one printing or heating up. Heater targets aren't set from PrintGuard. The firmware
+acknowledges a command it doesn't recognise as if it had worked, so PrintGuard confirms a pause or
+cancel by reading the printer's state back, as it does for every printer.
+
+The built-in camera is registered automatically from its MJPEG stream on port `8080`. It serves one
+reader at a time, so another app reading the camera when PrintGuard connects makes it refuse
+PrintGuard, and the camera shows as unavailable until it is free.
+
+The integration is experimental until it has been tried on more printers and firmware. It was built
+against firmware 2.0.0 on a Creator 5 Pro.
 
 </details>
 
@@ -255,6 +280,7 @@ heater off.
 | Prusa (PrusaLink) | Yes | No, PrusaLink has no endpoint for it |
 | Bambu Lab | Yes | Yes, as the `M104` and `M140` lines Bambu Studio sends |
 | Ultimaker | Yes, for the first nozzle | No, it needs a key approved on the printer's screen |
+| FlashForge Creator 5 | Yes, for the tool with the highest target | No |
 
 A target above 350 °C for the nozzle or 150 °C for the bed, or one that isn't a number, is
 refused. The dashboard moves what you type, and each preheat preset, to the limit instead, and the
